@@ -4,3 +4,6 @@ requests
 pdf2image
 pytesseract
 google-generativeai
+Pillow
+opencv-python-headless
+pyzbar
