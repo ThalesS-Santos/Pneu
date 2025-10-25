@@ -11,7 +11,7 @@ import google.generativeai as genai
 import textwrap
 
 # --- Configuração da Página e API Key ---
-st.set_page_config(page_title="Analisador de Relatório Autel", page_icon="📄")
+st.set_page_config(page_title="Analisador de Relatório Autel", page_icon=" mechanic")
 
 # Configurar a API Key do Streamlit Secrets
 try:
@@ -43,6 +43,7 @@ def download_e_converter_pdf(pdf_url):
         st.error(f"Erro ao converter o PDF (pdf2image/poppler): {e}")
         st.stop()
 
+@st.cache_data(ttl=3600) # Também faz cache do OCR
 def extrair_texto_das_imagens(images):
     """Etapa 4: Executa o OCR (Tesseract) em todas as imagens."""
     custom_config = r'--psm 6 -c load_system_dawg=0 -c load_freq_dawg=0'
@@ -67,7 +68,7 @@ def extrair_dados_com_ia(full_text):
     REGRAS IMPORTANTES:
     1. Os valores corretos são os 3 números que aparecem *embaixo* dos rótulos "DE", "DD", "TE", ou "TD" nas secções de inspeção detalhadas.
     2. Ignore os valores no sumário principal (ex: "8 mm", "3 mm", "1.6 mm").
-    3. Se o OCR removeu o ponto decimal (ex: '37' em vez de '3.7'), re-insira o ponto. O único valor que pode ser um inteiro é '14'. (ex: '37' -> '3.7', '18' -> '1.8', '14' -> '1.4').
+    3. Se o OCR removeu o ponto decimal (ex: '37' em vez de '3.7'), re-insira o ponto. (ex: '37' -> '3.7', '18' -> '1.8', '14' -> '1.4').
     4. Se um pneu não for encontrado, use "N/A" para as 3 medições.
     Retorne APENAS um objeto JSON único (um dicionário), no seguinte formato exato:
     {{
@@ -90,44 +91,47 @@ def extrair_dados_com_ia(full_text):
     except Exception as e:
         st.error(f"Erro na IA (Extração) ou ao processar o JSON: {e}")
         st.error(f"Texto recebido da IA: {response_extracao.text}")
-        st.stop()
+        return None # Retorna None em caso de falha
 
-def gerar_relatorio_com_ia(full_text, report_data):
-    """Etapa 6: Segunda chamada à IA para gerar a análise."""
+# --- (NOVO) PROMPT DE ANÁLISE RESUMIDA ---
+def gerar_relatorio_resumido_ia(full_text, report_data_json):
+    """Etapa 6: Segunda chamada à IA para gerar um relatório de AÇÃO."""
     model_analise = genai.GenerativeModel('gemini-2.5-flash-lite') 
-    prompt_analise = f"""
-    Aja como um especialista em segurança automóvel e mecânico de pneus.
-    Eu tenho dois conjuntos de dados:
     
-    1. O texto completo (com erros de OCR) de um relatório de pneus:
+    prompt_analise = f"""
+    Aja como um mecânico-chefe a escrever notas rápidas para a sua equipa.
+    Baseado no texto OCR e nos dados JSON extraídos, gere um **Relatório de Ação Resumido**.
+    Seja direto, técnico e use bullet points.
+
+    - Texto OCR (para contexto de sugestões):
     --- TEXTO OCR ---
     {full_text}
     --- FIM DO TEXTO OCR ---
 
-    2. Um JSON com os dados de medição extraídos desse texto:
+    - Dados Extraídos (para valores):
     --- JSON DE DADOS ---
-    {json.dumps(report_data)}
+    {report_data_json}
     --- FIM DO JSON DE DADOS ---
 
-    Sua tarefa é gerar um relatório analítico detalhado em português, como se estivesse a explicar a um cliente.
-    Use esta estrutura (use markdown para formatar):
-    
-    **Relatório Analítico de Pneus e Travões**
+    Use este formato exato em markdown:
 
-    **Sumário Executivo:**
-    (Faça um resumo de 1-2 frases sobre o estado geral do veículo, com base na sugestão "Estado do pneu" que está no texto OCR.)
+    ### Nível de Risco Geral: [Crítico / Alerta / OK]
 
-    **Análise Detalhada (Profundidade da Banda):**
-    (Para cada pneu (DE, DD, TE, TD), liste a pior medição (o menor número) dos 3 valores. Explique o que isso significa. Use a legenda do relatório:
-    - Verde (bom): > 3mm (ex: TE)
-    - Amarelo (alerta): 1.7mm a 3mm (ex: DE, DD)
-    - Vermelho (crítico): <= 1.6mm (ex: TD, se for o caso))
+    **Ação Imediata (Crítico - Vermelho < 1.7mm):**
+    * **Pneu [XX]:** Pior valor: [X.X]mm. [Ação recomendada do texto OCR, ex: "Substituir imediatamente"].
+    * *(Liste todos os pneus críticos)*
 
-    **Recomendações e Próximos Passos:**
-    (Liste as "Sugestões de reparação" encontradas no texto OCR para os pneus críticos (DD e TD) e os pneus em alerta (DE). Explique por que a "Distância de travagem" aumenta tanto com pneus gastos.)
+    **Ação Recomendada (Alerta - Amarelo 1.7mm-3.0mm):**
+    * **Pneu [XX]:** Pior valor: [X.X]mm. [Ação recomendada do texto OCR, ex: "Substituição recomendada"].
+    * *(Liste todos os pneus em alerta)*
 
-    **Inspeção Adicional:**
-    (Mencione o estado dos "Discos de travão" com base no texto OCR (ex: "Não verificado").)
+    **Pneus em Bom Estado (Verde > 3.0mm):**
+    * **Pneu [XX]:** Pior valor: [X.X]mm.
+    * *(Liste todos os pneus OK)*
+
+    **Notas Adicionais:**
+    * **Discos de Travão:** [Estado do texto OCR, ex: "Não verificado"].
+    * **Alinhamento:** [Sugestão do texto OCR, ex: "Verificar alinhamento após substituição"].
     """
     
     try:
@@ -137,44 +141,94 @@ def gerar_relatorio_com_ia(full_text, report_data):
         st.error(f"Erro na IA (Análise): {e}")
         st.stop()
 
+# --- (NOVA) FUNÇÃO DE UI PARA MÉTRICAS ---
+def get_cor_e_risco(valor_mm):
+    """Define a cor e o delta para a métrica com base no risco."""
+    if valor_mm is None:
+        return "normal", "N/A"
+    
+    if valor_mm <= 1.6:
+        return "inverse", "CRÍTICO" # Vermelho
+    elif valor_mm <= 3.0:
+        return "normal", "Alerta" # Amarelo (laranja no st.metric)
+    else:
+        return "off", "Bom" # Verde
+
+def mostrar_metricas_pneus(report_data):
+    """(GOAL 1) Exibe a caixa de mensagem com os piores valores."""
+    st.subheader("Balanço Rápido (Pior Medição)")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    pneus = {"DE": col1, "DD": col2, "TE": col3, "TD": col4}
+    
+    piores_valores = {}
+
+    for pneu, col in pneus.items():
+        data = report_data.get(pneu)
+        pior_valor_mm = None
+        
+        if data:
+            try:
+                # Converte todas as medições em float, ignora "N/A"
+                medicoes = [float(m) for m in data.values() if str(m).replace('.', '', 1).isdigit()]
+                if medicoes:
+                    pior_valor_mm = min(medicoes)
+            except Exception:
+                pass # Mantém pior_valor_mm como None
+        
+        piores_valores[pneu] = pior_valor_mm # Guarda para o expander
+        
+        # Define a cor e o texto de ajuda
+        cor, delta_label = get_cor_e_risco(pior_valor_mm)
+        valor_display = f"{pior_valor_mm} mm" if pior_valor_mm is not None else "N/A"
+        
+        with col:
+            st.metric(
+                label=f"**{pneu}** (Diant. Esq.)" if pneu == "DE" else \
+                      f"**{pneu}** (Diant. Dir.)" if pneu == "DD" else \
+                      f"**{pneu}** (Tras. Esq.)" if pneu == "TE" else \
+                      f"**{pneu}** (Tras. Dir.)",
+                value=valor_display,
+                delta=delta_label,
+                delta_color=cor
+            )
+
+    # Adiciona o expander com os detalhes
+    with st.expander("Ver todas as medições (Exterior / Centro / Interior)"):
+        st.json(report_data)
+
 
 # --- INTERFACE DO STREAMLIT (UI) ---
 
 st.title("🤖 Analisador de Relatórios de Pneus (Autel TBE)")
-st.write("Cole o link do relatório PDF gerado pelo QR Code para obter uma análise completa.")
+st.write("Cole o link do relatório PDF gerado pelo QR Code para obter uma análise rápida para mecânicos.")
 
-# Link de exemplo para facilitar o teste
 default_url = "https://gateway-prodeu.autel.com/api/pdf-report-manage/pdf-report/download/TB20M81009041758804644621"
 pdf_url = st.text_input("URL do Relatório PDF:", value=default_url)
 
-if st.button("Analisar Relatório"):
+if st.button("Analisar Relatório", type="primary"):
     if not pdf_url:
         st.warning("Por favor, insira um URL.")
     else:
-        # Estado 1: Download e OCR
-        with st.status("Etapa 1/4: A baixar e processar o PDF...", expanded=True) as status:
-            images = download_e_converter_pdf(pdf_url)
-            st.write(f"PDF processado. {len(images)} página(s) encontradas.")
-            
-            status.update(label="Etapa 2/4: A extrair texto das imagens (OCR)...")
-            full_text = extrair_texto_das_imagens(images)
-            st.write("Texto extraído com sucesso.")
-            status.update(state="complete", expanded=False)
-
-        # Estado 2: Extração IA
-        with st.status("Etapa 3/4: A extrair dados com a IA (Gemini)...") as status:
-            report_data = extrair_dados_com_ia(full_text)
-            st.write("Dados extraídos:")
-            st.json(report_data) # Mostra o JSON extraído
-            status.update(state="complete", expanded=False)
-
-        # Estado 3: Análise IA
-        with st.status("Etapa 4/4: A gerar relatório analítico (IA)...") as status:
-            final_report = gerar_relatorio_com_ia(full_text, report_data)
-            status.update(state="complete", expanded=True)
-            
-        st.success("Relatório Concluído!")
-        st.markdown("---")
+        report_data = None
         
-        # Exibe o relatório final
-        st.markdown(final_report)
+        # Etapas 1-5 (Download, OCR, Extração IA)
+        with st.spinner("A processar PDF e a extrair dados..."):
+            images = download_e_converter_pdf(pdf_url)
+            full_text = extrair_texto_das_imagens(images)
+            report_data = extrair_dados_com_ia(full_text)
+        
+        if report_data:
+            # (GOAL 1) Mostrar a caixa de métricas imediatamente
+            mostrar_metricas_pneus(report_data)
+            
+            st.markdown("---") # Divisor
+
+            # Etapa 6 (Análise Resumida IA)
+            with st.spinner("A gerar relatório de ação resumido..."):
+                final_report = gerar_relatorio_resumido_ia(full_text, json.dumps(report_data))
+            
+            # (GOAL 2) Mostrar o relatório resumido
+            st.markdown(final_report)
+        else:
+            st.error("A extração de dados falhou. Não é possível gerar o relatório.")
