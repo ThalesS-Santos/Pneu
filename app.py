@@ -112,8 +112,13 @@ def extrair_dados_com_ia(full_text):
         st.error(f"Texto recebido da IA: {response_extracao.text}")
         return None
 
+# ==================================================================
+# --- (PROMPT DE ANÁLISE CORRIGIDO E MAIS RIGOROSO) ---
+# ==================================================================
 def gerar_relatorio_resumido_ia(full_text, report_data_json):
+    """Etapa 6: Segunda chamada à IA para gerar um relatório de AÇÃO."""
     model_analise = genai.GenerativeModel('gemini-2.5-flash-lite') 
+    
     prompt_analise = f"""
     Aja como um mecânico-chefe a escrever notas rápidas para a sua equipa.
     Baseado no texto OCR e nos dados JSON extraídos, gere um **Relatório de Ação Resumido**.
@@ -129,26 +134,38 @@ def gerar_relatorio_resumido_ia(full_text, report_data_json):
     {report_data_json}
     --- FIM DO JSON DE DADOS ---
 
-    Use este formato exato em markdown:
+    **REGRAS PARA EVITAR ALUCINAÇÕES:**
+    1.  A sua tarefa é categorizar cada um dos quatro pneus (DE, DD, TE, TD) numa das três categorias de risco.
+    2.  Para CADA pneu, calcule o seu **PIOR (menor) valor** a partir dos 3 valores no JSON de dados.
+    3.  Use esse *único pior valor* para decidir a categoria:
+        * **Crítico (Vermelho):** Pior valor <= 1.6mm
+        * **Alerta (Amarelo):** Pior valor entre 1.7mm e 3.0mm
+        * **Bom (Verde):** Pior valor > 3.0mm
+    4.  **IMPORTANTE: Cada pneu (DE, DD, TE, TD) só pode aparecer UMA VEZ no relatório final, dentro da sua categoria correta.** Não liste as outras medições.
+    5.  Para a "Ação recomendada", procure no TEXTO OCR o bloco de texto específico desse pneu (ex: o bloco debaixo de "DE" e "Inspeção visual"). Encontre a linha "Sugestões de reparação:" *dentro* desse bloco específico. Cite apenas a sugestão "1.".
+    6.  Ignore o sumário "Estado do pneu:" no topo do texto OCR, pois ele pode ser confuso.
+
+    **Use este formato exato em markdown:**
 
     ### Nível de Risco Geral: [Crítico / Alerta / OK]
 
-    **Ação Imediata (Crítico - Vermelho < 1.7mm):**
-    * **Pneu [XX]:** Pior valor: [X.X]mm. [Ação recomendada do texto OCR, ex: "Substituir imediatamente"].
-    * *(Liste todos os pneus críticos)*
+    **Ação Imediata (Crítico - Vermelho <= 1.6mm):**
+    * **Pneu [XX]:** Pior valor: [X.X]mm. (Sugestão: [Ação recomendada "1." do bloco OCR desse pneu]).
+    * *(Liste APENAS os pneus que se encaixam aqui)*
 
     **Ação Recomendada (Alerta - Amarelo 1.7mm-3.0mm):**
-    * **Pneu [XX]:** Pior valor: [X.X]mm. [Ação recomendada do texto OCR, ex: "Substituição recomendada"].
-    * *(Liste todos os pneus em alerta)*
+    * **Pneu [XX]:** Pior valor: [X.X]mm. (Sugestão: [Ação recomendada "1." do bloco OCR desse pneu]).
+    * *(Liste APENAS os pneus que se encaixam aqui)*
 
     **Pneus em Bom Estado (Verde > 3.0mm):**
-    * **Pneu [XX]:** Pior valor: [X.X]mm.
-    * *(Liste todos os pneus OK)*
+    * **Pneu [XX]:** Pior valor: [X.X]mm. (Sugestão: [Ação recomendada "1." do bloco OCR desse pneu, ex: "Verificar pneus regularmente"]).
+    * *(Liste APENAS os pneus que se encaixam aqui)*
 
     **Notas Adicionais:**
     * **Discos de Travão:** [Estado do texto OCR, ex: "Não verificado"].
-    * **Alinhamento:** [Sugestão do texto OCR, ex: "Verificar alinhamento após substituição"].
+    * **Alinhamento:** [Mencione a sugestão de "alinhamento" do texto OCR, se existir].
     """
+    
     try:
         response_analise = model_analise.generate_content(prompt_analise)
         return response_analise.text
@@ -156,32 +173,44 @@ def gerar_relatorio_resumido_ia(full_text, report_data_json):
         st.error(f"Erro na IA (Análise): {e}")
         st.stop()
 
+
 def get_cor_e_risco(valor_mm):
+    """Define a cor e o delta para a métrica com base no risco."""
     if valor_mm is None:
         return "normal", "N/A"
+    
     if valor_mm <= 1.6:
-        return "inverse", "CRÍTICO" 
+        return "inverse", "CRÍTICO" # Vermelho
     elif valor_mm <= 3.0:
-        return "normal", "Alerta" 
+        return "normal", "Alerta" # Amarelo (laranja no st.metric)
     else:
-        return "off", "Bom" 
+        return "off", "Bom" # Verde
 
 def mostrar_metricas_pneus(report_data):
+    """Exibe a caixa de mensagem com os piores valores."""
     st.subheader("Balanço Rápido (Pior Medição)")
+    
     col1, col2, col3, col4 = st.columns(4)
     pneus = {"DE": col1, "DD": col2, "TE": col3, "TD": col4}
     
+    piores_valores = {}
+
     for pneu, col in pneus.items():
         data = report_data.get(pneu)
         pior_valor_mm = None
+        
         if data:
             try:
+                # Converte todas as medições em float, ignora "N/A"
                 medicoes = [float(m) for m in data.values() if str(m).replace('.', '', 1).isdigit()]
                 if medicoes:
                     pior_valor_mm = min(medicoes)
             except Exception:
-                pass
+                pass # Mantém pior_valor_mm como None
         
+        piores_valores[pneu] = pior_valor_mm # Guarda para o expander
+        
+        # Define a cor e o texto de ajuda
         cor, delta_label = get_cor_e_risco(pior_valor_mm)
         valor_display = f"{pior_valor_mm} mm" if pior_valor_mm is not None else "N/A"
         
@@ -200,6 +229,7 @@ def mostrar_metricas_pneus(report_data):
                 delta_color=cor
             )
 
+    # Adiciona o expander com os detalhes
     with st.expander("Ver todas as medições (Exterior / Centro / Interior)"):
         st.json(report_data)
 
