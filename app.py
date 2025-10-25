@@ -14,6 +14,9 @@ import textwrap
 from PIL import Image
 from pyzbar.pyzbar import decode
 
+# --- NOVA BIBLIOTECA PARA GRÁFICOS ---
+import matplotlib.pyplot as plt
+
 # --- Configuração da Página e API Key ---
 st.set_page_config(page_title="Analisador de Relatório Autel", page_icon=" mechanic")
 
@@ -31,7 +34,6 @@ except Exception as e:
 
 # --- (NOVA) FUNÇÃO PARA DESCODIFICAR QR CODE ---
 def decode_qr_code(image_data):
-    """Lê dados de uma imagem (de upload ou câmara) e descodifica o QR code."""
     try:
         img = Image.open(image_data)
         decoded_objects = decode(img)
@@ -76,41 +78,34 @@ def extrair_texto_das_imagens(_images):
 
 def extrair_dados_com_ia(full_text):
     """Etapa 5: Primeira chamada à IA para extrair o JSON de medições."""
-    model_extraca = genai.GenerativeModel('gemini-2.5-flash-lite')
-    
+    model_extraca = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt_extracao = f"""
     Analise o seguinte texto, que foi extraído (via OCR) de um relatório de pneus.
     O texto está dividido por páginas (--- INÍCIO PÁGINA 1 ---, --- INÍCIO PÁGINA 2 ---).
     O texto pode conter erros de OCR (ex: '3.7' pode aparecer como '37', 'TE' como 'SE', 'TD' como 'Si').
-
     Sua tarefa é extrair as três medições de profundidade (em mm) para cada pneu.
-
     REGRAS DE EXTRAÇÃO PARA EVITAR TROCAS:
     1.  **DE (Dianteiro Esquerdo)**: Encontra-se APENAS no texto da **PÁGINA 1**.
     2.  **DD (Dianteiro Direito)**: Encontra-se APENAS no texto da **PÁGINA 1**.
     3.  **TE (Traseiro Esquerdo)**: Encontra-se APENAS no texto da **PÁGINA 2**. (O OCR pode lê-lo como "SE").
     4.  **TD (Traseiro Direito)**: Encontra-se APENAS no texto da **PÁGINA 2**. (O OCR pode lê-lo como "Si").
-    
     REGRAS DE DADOS:
     1.  Os valores corretos são os 3 números que aparecem *embaixo* dos rótulos (DE, DD, TE, TD).
     2.  Ignore os valores no sumário principal (ex: "8 mm", "3 mm", "1.6 mm").
     3.  Se o OCR removeu o ponto decimal (ex: '37' em vez de '3.7'), re-insira o ponto. (ex: '37' -> '3.7', '18' -> '1.8', '14' -> '1.4').
     4.  Se um pneu não for encontrado, use "N/A" para as 3 medições.
-
     Retorne APENAS um objeto JSON único (um dicionário), no seguinte formato exato:
     {{
       "DE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
       "DD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
       "TE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
-      "TD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}}
+      "TD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "XX"}}
     }}
-
     Texto para analisar:
     ---
     {full_text}
     ---
     """
- 
     try:
         response_extracao = model_extraca.generate_content(prompt_extracao)
         json_text = response_extracao.text.strip().replace("```json", "").replace("```", "")
@@ -121,15 +116,11 @@ def extrair_dados_com_ia(full_text):
         st.error(f"Texto recebido da IA: {response_extracao.text}")
         return None
 
-# ==================================================================
-# --- (NOVA) ETAPA 5.5: O MOTOR DE LÓGICA FEITO EM PYTHON ---
-# ==================================================================
 def analisar_dados_logicamente(report_data, full_text):
-    """Pega no JSON de dados e no texto OCR e faz a análise lógica (0% IA)."""
+    """Etapa 5.5: O motor de lógica feito em Python."""
     analysis_result = {}
     pneus = ["DE", "DD", "TE", "TD"]
     
-    # --- Regras de Risco (Lógica Python) ---
     def get_categoria(valor_mm):
         if valor_mm is None:
             return "N/A"
@@ -140,10 +131,7 @@ def analisar_dados_logicamente(report_data, full_text):
         else:
             return "Bom"
 
-    # --- RegEx para encontrar a sugestão correta (Lógica Python) ---
     def get_sugestao(pneu, full_text):
-        # Procura o bloco de texto específico do pneu 
-        # (ex: "DE... Desgaste disc travão: ... Sugestões de reparação: 1. ... 2. ...")
         padrao = rf"{pneu}\s*.*?(?:Sugestões de reparação:|Sugestões:)\s*1\.\s*([^\n2\.]*)"
         match = re.search(padrao, full_text, re.DOTALL | re.IGNORECASE)
         if match:
@@ -151,7 +139,6 @@ def analisar_dados_logicamente(report_data, full_text):
             return sugestao
         return "Nenhuma sugestão específica encontrada."
 
-    # --- Processa cada pneu ---
     categorias_encontradas = set()
     for pneu in pneus:
         data = report_data.get(pneu)
@@ -176,7 +163,6 @@ def analisar_dados_logicamente(report_data, full_text):
             "sugestao": get_sugestao(pneu, full_text)
         }
     
-    # --- Determina Risco Geral (Lógica Python) ---
     if "Crítico" in categorias_encontradas:
         risco_geral = "Crítico"
     elif "Alerta" in categorias_encontradas:
@@ -188,7 +174,6 @@ def analisar_dados_logicamente(report_data, full_text):
         
     analysis_result["risco_geral"] = risco_geral
     
-    # --- Processa Informações Adicionais (Lógica Python) ---
     discos_match = re.search(r"Desgaste disc travão:.*?(Não verificado)", full_text, re.IGNORECASE)
     alinhamento_match = re.search(r"(parâmetros de alinhamento das quatro rodas)", full_text, re.IGNORECASE)
 
@@ -199,15 +184,9 @@ def analisar_dados_logicamente(report_data, full_text):
     
     return analysis_result
 
-
-# ==================================================================
-# --- ETAPA 6: A IA APENAS FORMATA O RELATÓRIO (SEM LÓGICA) ---
-# ==================================================================
 def gerar_relatorio_formatado_ia(analysis_json):
     """Etapa 6: A IA apenas FORMATA o JSON pré-analisado."""
-    model_analise = genai.GenerativeModel('gemini-2.5-flash-lite') # Flash é suficiente para formatação
-    
-    # Este prompt é agora muito mais simples. A IA não pode errar.
+    model_analise = genai.GenerativeModel('gemini-1.5-flash-latest')
     prompt_analise = f"""
     Aja como um formatador de relatórios. Você recebeu um objeto JSON que JÁ CONTÉM toda a lógica e análise de um relatório de pneus.
     Sua ÚNICA tarefa é formatar este JSON em um "Relatório de Ação Resumido" em markdown, em português.
@@ -266,8 +245,70 @@ def get_cor_e_risco(valor_mm):
     else:
         return "off", "Bom" # Verde
 
+# ==================================================================
+# --- (NOVA FUNÇÃO) PARA DESENHAR O DESGASTE ---
+# ==================================================================
+def plotar_desgaste_pneu(medicoes_dict, pneu_label):
+    """Cria um gráfico de barras (Matplotlib) para o desgaste do pneu."""
+    
+    labels = ["Exterior", "Centro", "Interior"]
+    valores = [None, None, None]
+    
+    if medicoes_dict:
+        try:
+            # Tenta converter os valores para float, tratando "N/A"
+            valores = [
+                float(medicoes_dict.get('medicao_1', '0')),
+                float(medicoes_dict.get('medicao_2', '0')),
+                float(medicoes_dict.get('medicao_3', '0'))
+            ]
+        except (ValueError, TypeError):
+            valores = [0, 0, 0] # Em caso de erro, desenha barras vazias
+            
+    # Define as cores com base no risco
+    cores = []
+    for v in valores:
+        if v <= 1.6:
+            cores.append("#FF4B4B") # Vermelho do Streamlit
+        elif v <= 3.0:
+            cores.append("#FFC00A") # Laranja/Amarelo do Streamlit
+        else:
+            cores.append("#28A138") # Verde
+
+    # Cria a figura e o eixo
+    fig, ax = plt.subplots(figsize=(4, 2))
+    
+    # Desenha as barras de desgaste
+    barras = ax.bar(labels, valores, color=cores, width=0.8)
+    
+    # Adiciona os rótulos de dados (números) em cima das barras
+    ax.bar_label(barras, fmt='%.1f mm', fontsize=10, color='black', padding=3)
+    
+    # Define o limite máximo do gráfico (ex: 15mm, para incluir o 14mm do TD)
+    ax.set_ylim(0, 15)
+    
+    # Limpa a poluição visual
+    ax.set_title(pneu_label, fontweight="bold")
+    ax.set_yticks([]) # Remove os números do eixo Y
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+    ax.spines['bottom'].set_color('#888')
+    ax.tick_params(axis='x', colors='#333')
+    
+    # Define a cor de fundo transparente
+    fig.patch.set_alpha(0.0)
+    ax.patch.set_alpha(0.0)
+    
+    # Envia o gráfico para o Streamlit
+    st.pyplot(fig)
+
+
+# ==================================================================
+# --- (FUNÇÃO MODIFICADA) PARA MOSTRAR MÉTRICAS E GRÁFICOS ---
+# ==================================================================
 def mostrar_metricas_pneus(report_data):
-    """Exibe a caixa de mensagem com os piores valores."""
+    """Exibe a caixa de mensagem com os piores valores E os gráficos de desgaste."""
     st.subheader("Balanço Rápido (Pior Medição)")
     
     col1, col2, col3, col4 = st.columns(4)
@@ -307,24 +348,35 @@ def mostrar_metricas_pneus(report_data):
                 delta_color=cor
             )
 
-    with st.expander("Ver todas as medições (Exterior / Centro / Interior)"):
-        st.json(report_data)
+    # --- (NOVA SEÇÃO DE VISUALIZAÇÃO) ---
+    st.subheader("Visualização do Desgaste (Exterior / Centro / Interior)")
+    
+    # Cria duas colunas para organizar os 4 gráficos
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        plotar_desgaste_pneu(report_data.get("DE"), "DE (Dianteiro Esquerdo)")
+        plotar_desgaste_pneu(report_data.get("TE"), "TE (Traseiro Esquerdo)")
+        
+    with col_b:
+        plotar_desgaste_pneu(report_data.get("DD"), "DD (Dianteiro Direito)")
+        plotar_desgaste_pneu(report_data.get("TD"), "TD (Traseiro Direito)")
+        
 
 # --- (NOVA) FUNÇÃO DE PIPELINE PRINCIPAL ---
 def run_analysis_pipeline(pdf_url):
     """Executa todo o processo de análise num determinado URL."""
     report_data = None
     
-    # Etapas 1-5 (Download, OCR, Extração IA)
     with st.spinner("A processar PDF e a extrair dados..."):
         images = download_e_converter_pdf(pdf_url)
         full_text = extrair_texto_das_imagens(images)
-        report_data_numeros = extrair_dados_com_ia(full_text) # JSON só com números
+        report_data_numeros = extrair_dados_com_ia(full_text)
     
     if report_data_numeros:
-        # (GOAL 1) Mostrar a caixa de métricas
+        # (GOAL 1) Mostrar a caixa de métricas E OS NOVOS GRÁFICOS
         mostrar_metricas_pneus(report_data_numeros)
-        st.markdown("---") # Divisor
+        st.markdown("---") 
 
         # (NOVA ETAPA 5.5) - Python faz a lógica
         with st.spinner("A analisar dados e sugestões..."):
