@@ -1,0 +1,6 @@
+# Ficheiro: requirements.txt
+streamlit
+requests
+pdf2image
+pytesseract
+google-generativeai
