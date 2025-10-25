@@ -1,0 +1,4 @@
+# Ficheiro: packages.txt
+poppler-utils
+tesseract-ocr
+tesseract-ocr-por
