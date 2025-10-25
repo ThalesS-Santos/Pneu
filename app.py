@@ -78,7 +78,7 @@ def extrair_texto_das_imagens(_images):
 
 def extrair_dados_com_ia(full_text):
     """Etapa 5: Primeira chamada à IA para extrair o JSON de medições."""
-    model_extraca = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model_extraca = genai.GenerativeModel('gemini-2.5-flash-lite')
     prompt_extracao = f"""
     Analise o seguinte texto, que foi extraído (via OCR) de um relatório de pneus.
     O texto está dividido por páginas (--- INÍCIO PÁGINA 1 ---, --- INÍCIO PÁGINA 2 ---).
@@ -99,7 +99,7 @@ def extrair_dados_com_ia(full_text):
       "DE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
       "DD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
       "TE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
-      "TD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "XX"}}
+      "TD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}}
     }}
     Texto para analisar:
     ---
@@ -186,7 +186,7 @@ def analisar_dados_logicamente(report_data, full_text):
 
 def gerar_relatorio_formatado_ia(analysis_json):
     """Etapa 6: A IA apenas FORMATA o JSON pré-analisado."""
-    model_analise = genai.GenerativeModel('gemini-1.5-flash-latest')
+    model_analise = genai.GenerativeModel('gemini-2.5-flash-lite')
     prompt_analise = f"""
     Aja como um formatador de relatórios. Você recebeu um objeto JSON que JÁ CONTÉM toda a lógica e análise de um relatório de pneus.
     Sua ÚNICA tarefa é formatar este JSON em um "Relatório de Ação Resumido" em markdown, em português.
@@ -245,9 +245,6 @@ def get_cor_e_risco(valor_mm):
     else:
         return "off", "Bom" # Verde
 
-# ==================================================================
-# --- (NOVA FUNÇÃO) PARA DESENHAR O DESGASTE ---
-# ==================================================================
 def plotar_desgaste_pneu(medicoes_dict, pneu_label):
     """Cria um gráfico de barras (Matplotlib) para o desgaste do pneu."""
     
