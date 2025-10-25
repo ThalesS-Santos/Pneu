@@ -33,14 +33,9 @@ except Exception as e:
 def decode_qr_code(image_data):
     """Lê dados de uma imagem (de upload ou câmara) e descodifica o QR code."""
     try:
-        # Abrir a imagem com o Pillow
         img = Image.open(image_data)
-        
-        # Descodificar QR codes
         decoded_objects = decode(img)
-        
         if decoded_objects:
-            # Assume que o primeiro QR code encontrado é o correto
             url = decoded_objects[0].data.decode('utf-8')
             return url
         else:
@@ -80,6 +75,7 @@ def extrair_texto_das_imagens(_images):
     return full_text
 
 def extrair_dados_com_ia(full_text):
+    """Etapa 5: Primeira chamada à IA para extrair o JSON de medições."""
     model_extraca = genai.GenerativeModel('gemini-2.5-flash-lite')
     prompt_extracao = f"""
     Analise o seguinte texto, que foi extraído (via OCR) de um relatório de pneus.
@@ -113,64 +109,135 @@ def extrair_dados_com_ia(full_text):
         return None
 
 # ==================================================================
-# --- (PROMPT DE ANÁLISE CORRIGIDO E MAIS RIGOROSO) ---
+# --- (NOVA) ETAPA 5.5: O MOTOR DE LÓGICA FEITO EM PYTHON ---
 # ==================================================================
-def gerar_relatorio_resumido_ia(full_text, report_data_json):
-    """Etapa 6: Segunda chamada à IA para gerar um relatório de AÇÃO."""
-    model_analise = genai.GenerativeModel('gemini-2.5-flash-lite') 
+def analisar_dados_logicamente(report_data, full_text):
+    """Pega no JSON de dados e no texto OCR e faz a análise lógica (0% IA)."""
+    analysis_result = {}
+    pneus = ["DE", "DD", "TE", "TD"]
     
+    # --- Regras de Risco (Lógica Python) ---
+    def get_categoria(valor_mm):
+        if valor_mm is None:
+            return "N/A"
+        if valor_mm <= 1.6:
+            return "Crítico"
+        elif valor_mm <= 3.0:
+            return "Alerta"
+        else:
+            return "Bom"
+
+    # --- RegEx para encontrar a sugestão correta (Lógica Python) ---
+    def get_sugestao(pneu, full_text):
+        # Procura o bloco de texto específico do pneu 
+        # (ex: "DE... Desgaste disc travão: ... Sugestões de reparação: 1. ... 2. ...")
+        padrao = rf"{pneu}\s*.*?(?:Sugestões de reparação:|Sugestões:)\s*1\.\s*([^\n2\.]*)"
+        match = re.search(padrao, full_text, re.DOTALL | re.IGNORECASE)
+        if match:
+            sugestao = match.group(1).strip().replace('\n', ' ').replace('Sugestões', '')
+            return sugestao
+        return "Nenhuma sugestão específica encontrada."
+
+    # --- Processa cada pneu ---
+    categorias_encontradas = set()
+    for pneu in pneus:
+        data = report_data.get(pneu)
+        pior_valor_mm = None
+        medicoes_str = ["N/A", "N/A", "N/A"]
+
+        if data:
+            try:
+                medicoes_str = [data.get('medicao_1', 'N/A'), data.get('medicao_2', 'N/A'), data.get('medicao_3', 'N/A')]
+                medicoes_float = [float(m) for m in medicoes_str if str(m).replace('.', '', 1).isdigit()]
+                if medicoes_float:
+                    pior_valor_mm = min(medicoes_float)
+            except Exception:
+                pass
+        
+        categoria_pneu = get_categoria(pior_valor_mm)
+        categorias_encontradas.add(categoria_pneu)
+        
+        analysis_result[pneu] = {
+            "pior_valor": pior_valor_mm,
+            "categoria": categoria_pneu,
+            "sugestao": get_sugestao(pneu, full_text)
+        }
+    
+    # --- Determina Risco Geral (Lógica Python) ---
+    if "Crítico" in categorias_encontradas:
+        risco_geral = "Crítico"
+    elif "Alerta" in categorias_encontradas:
+        risco_geral = "Alerta"
+    elif "Bom" in categorias_encontradas:
+        risco_geral = "OK"
+    else:
+        risco_geral = "Indeterminado"
+        
+    analysis_result["risco_geral"] = risco_geral
+    
+    # --- Processa Informações Adicionais (Lógica Python) ---
+    discos_match = re.search(r"Desgaste disc travão:.*?(Não verificado)", full_text, re.IGNORECASE)
+    alinhamento_match = re.search(r"(parâmetros de alinhamento das quatro rodas)", full_text, re.IGNORECASE)
+
+    analysis_result["info_adicional"] = {
+        "discos_travao": discos_match.group(1).strip() if discos_match else "Não mencionado",
+        "alinhamento": "Recomenda-se verificar o alinhamento" if alinhamento_match else "Não mencionado"
+    }
+    
+    return analysis_result
+
+
+# ==================================================================
+# --- ETAPA 6: A IA APENAS FORMATA O RELATÓRIO (SEM LÓGICA) ---
+# ==================================================================
+def gerar_relatorio_formatado_ia(analysis_json):
+    """Etapa 6: A IA apenas FORMATA o JSON pré-analisado."""
+    model_analise = genai.GenerativeModel('gemini-2.5-flash-lite') # Flash é suficiente para formatação
+    
+    # Este prompt é agora muito mais simples. A IA não pode errar.
     prompt_analise = f"""
-    Aja como um mecânico-chefe a escrever notas rápidas para a sua equipa.
-    Baseado no texto OCR e nos dados JSON extraídos, gere um **Relatório de Ação Resumido**.
-    Seja direto, técnico e use bullet points.
+    Aja como um formatador de relatórios. Você recebeu um objeto JSON que JÁ CONTÉM toda a lógica e análise de um relatório de pneus.
+    Sua ÚNICA tarefa é formatar este JSON em um "Relatório de Ação Resumido" em markdown, em português.
+    NÃO calcule, NÃO deduza, NÃO adicione informações que não estejam no JSON. Apenas formate o que foi dado.
 
-    - Texto OCR (para contexto de sugestões):
-    --- TEXTO OCR ---
-    {full_text}
-    --- FIM DO TEXTO OCR ---
-
-    - Dados Extraídos (para valores):
+    - JSON de Análise (Fonte da Verdade):
     --- JSON DE DADOS ---
-    {report_data_json}
+    {analysis_json}
     --- FIM DO JSON DE DADOS ---
 
-    **REGRAS PARA EVITAR ALUCINAÇÕES:**
-    1.  A sua tarefa é categorizar cada um dos quatro pneus (DE, DD, TE, TD) numa das três categorias de risco.
-    2.  Para CADA pneu, calcule o seu **PIOR (menor) valor** a partir dos 3 valores no JSON de dados.
-    3.  Use esse *único pior valor* para decidir a categoria:
-        * **Crítico (Vermelho):** Pior valor <= 1.6mm
-        * **Alerta (Amarelo):** Pior valor entre 1.7mm e 3.0mm
-        * **Bom (Verde):** Pior valor > 3.0mm
-    4.  **IMPORTANTE: Cada pneu (DE, DD, TE, TD) só pode aparecer UMA VEZ no relatório final, dentro da sua categoria correta.** Não liste as outras medições.
-    5.  Para a "Ação recomendada", procure no TEXTO OCR o bloco de texto específico desse pneu (ex: o bloco debaixo de "DE" e "Inspeção visual"). Encontre a linha "Sugestões de reparação:" *dentro* desse bloco específico. Cite apenas a sugestão "1.".
-    6.  Ignore o sumário "Estado do pneu:" no topo do texto OCR, pois ele pode ser confuso.
+    **Instruções de Formatação:**
+    1.  Use o "risco_geral" do JSON para o título.
+    2.  Para cada categoria ("Crítico", "Alerta", "Bom"), liste os pneus que o JSON marcou com essa categoria.
+    3.  Para cada pneu, liste seu "pior_valor" e a "sugestao" exata fornecida no JSON.
+    4.  Se uma categoria não tiver pneus, escreva: "Nenhum pneu nesta categoria."
+    5.  Nas "Notas Adicionais", liste as "info_adicional" do JSON.
 
     **Use este formato exato em markdown:**
 
-    ### Nível de Risco Geral: [Crítico / Alerta / OK]
+    ### Nível de Risco Geral: [risco_geral do JSON]
 
     **Ação Imediata (Crítico - Vermelho <= 1.6mm):**
-    * **Pneu [XX]:** Pior valor: [X.X]mm. (Sugestão: [Ação recomendada "1." do bloco OCR desse pneu]).
-    * *(Liste APENAS os pneus que se encaixam aqui)*
+    * **Pneu [XX]:** Pior valor: [pior_valor]mm. (Sugestão: [sugestao]).
+    * *(Liste aqui APENAS os pneus com categoria "Crítico")*
 
     **Ação Recomendada (Alerta - Amarelo 1.7mm-3.0mm):**
-    * **Pneu [XX]:** Pior valor: [X.X]mm. (Sugestão: [Ação recomendada "1." do bloco OCR desse pneu]).
-    * *(Liste APENAS os pneus que se encaixam aqui)*
+    * **Pneu [XX]:** Pior valor: [pior_valor]mm. (Sugestão: [sugestao]).
+    * *(Liste aqui APENAS os pneus com categoria "Alerta")*
 
     **Pneus em Bom Estado (Verde > 3.0mm):**
-    * **Pneu [XX]:** Pior valor: [X.X]mm. (Sugestão: [Ação recomendada "1." do bloco OCR desse pneu, ex: "Verificar pneus regularmente"]).
-    * *(Liste APENAS os pneus que se encaixam aqui)*
+    * **Pneu [XX]:** Pior valor: [pior_valor]mm. (Sugestão: [sugestao]).
+    * *(Liste aqui APENAS os pneus com categoria "Bom")*
 
     **Notas Adicionais:**
-    * **Discos de Travão:** [Estado do texto OCR, ex: "Não verificado"].
-    * **Alinhamento:** [Mencione a sugestão de "alinhamento" do texto OCR, se existir].
+    * **Discos de Travão:** [info_adicional.discos_travao do JSON]
+    * **Alinhamento:** [info_adicional.alinhamento do JSON]
     """
     
     try:
         response_analise = model_analise.generate_content(prompt_analise)
         return response_analise.text
     except Exception as e:
-        st.error(f"Erro na IA (Análise): {e}")
+        st.error(f"Erro na IA (Formatação): {e}")
         st.stop()
 
 
@@ -201,16 +268,14 @@ def mostrar_metricas_pneus(report_data):
         
         if data:
             try:
-                # Converte todas as medições em float, ignora "N/A"
                 medicoes = [float(m) for m in data.values() if str(m).replace('.', '', 1).isdigit()]
                 if medicoes:
                     pior_valor_mm = min(medicoes)
             except Exception:
-                pass # Mantém pior_valor_mm como None
+                pass
         
-        piores_valores[pneu] = pior_valor_mm # Guarda para o expander
+        piores_valores[pneu] = pior_valor_mm 
         
-        # Define a cor e o texto de ajuda
         cor, delta_label = get_cor_e_risco(pior_valor_mm)
         valor_display = f"{pior_valor_mm} mm" if pior_valor_mm is not None else "N/A"
         
@@ -229,7 +294,6 @@ def mostrar_metricas_pneus(report_data):
                 delta_color=cor
             )
 
-    # Adiciona o expander com os detalhes
     with st.expander("Ver todas as medições (Exterior / Centro / Interior)"):
         st.json(report_data)
 
@@ -242,18 +306,21 @@ def run_analysis_pipeline(pdf_url):
     with st.spinner("A processar PDF e a extrair dados..."):
         images = download_e_converter_pdf(pdf_url)
         full_text = extrair_texto_das_imagens(images)
-        report_data = extrair_dados_com_ia(full_text)
+        report_data_numeros = extrair_dados_com_ia(full_text) # JSON só com números
     
-    if report_data:
-        # Mostrar a caixa de métricas
-        mostrar_metricas_pneus(report_data)
+    if report_data_numeros:
+        # (GOAL 1) Mostrar a caixa de métricas
+        mostrar_metricas_pneus(report_data_numeros)
         st.markdown("---") # Divisor
 
-        # Etapa 6 (Análise Resumida IA)
-        with st.spinner("A gerar relatório de ação resumido..."):
-            final_report = gerar_relatorio_resumido_ia(full_text, json.dumps(report_data))
+        # (NOVA ETAPA 5.5) - Python faz a lógica
+        with st.spinner("A analisar dados e sugestões..."):
+            pre_analysis_json = analisar_dados_logicamente(report_data_numeros, full_text)
         
-        # Mostrar o relatório resumido
+        # Etapa 6 (Análise Resumida IA)
+        with st.spinner("A gerar relatório de ação formatado..."):
+            final_report = gerar_relatorio_formatado_ia(json.dumps(pre_analysis_json))
+        
         st.markdown(final_report)
     else:
         st.error("A extração de dados falhou. Não é possível gerar o relatório.")
@@ -264,7 +331,6 @@ def run_analysis_pipeline(pdf_url):
 st.title("🤖 Analisador de Relatórios de Pneus (Autel TBE)")
 st.write("Forneça o relatório PDF usando uma das opções abaixo.")
 
-# Link de exemplo para facilitar o teste
 default_url = "https://gateway-prodeu.autel.com/api/pdf-report-manage/pdf-report/download/TB20M81009041758804644621"
 
 tab1, tab2, tab3 = st.tabs(["Colar URL", "Upload QR Code", "Escanear QR Code"])
@@ -285,7 +351,6 @@ with tab2:
     qr_file = st.file_uploader("Carregue a foto do QR Code:", type=["png", "jpg", "jpeg"])
     
     if qr_file:
-        # Tenta descodificar assim que o ficheiro é carregado
         with st.spinner("A ler o QR Code..."):
             pdf_url_from_qr = decode_qr_code(qr_file)
             
@@ -293,7 +358,6 @@ with tab2:
                 st.success(f"QR Code lido com sucesso!")
                 st.info(f"URL encontrado: `{pdf_url_from_qr}`")
                 
-                # Botão de análise para esta aba
                 if st.button("Analisar a partir do QR Code (Upload)", type="primary"):
                     run_analysis_pipeline(pdf_url_from_qr)
             else:
@@ -307,7 +371,6 @@ with tab3:
     qr_cam_img = st.camera_input("Apontar a câmara para o QR Code")
     
     if qr_cam_img:
-        # Tenta descodificar assim que a foto é tirada
         with st.spinner("A ler o QR Code da foto..."):
             pdf_url_from_cam = decode_qr_code(qr_cam_img)
             
@@ -315,7 +378,6 @@ with tab3:
                 st.success(f"QR Code lido com sucesso!")
                 st.info(f"URL encontrado: `{pdf_url_from_cam}`")
                 
-                # Botão de análise para esta aba
                 if st.button("Analisar a partir do QR Code (Câmara)", type="primary"):
                     run_analysis_pipeline(pdf_url_from_cam)
             else:
