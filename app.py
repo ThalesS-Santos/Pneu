@@ -43,13 +43,17 @@ def download_e_converter_pdf(pdf_url):
         st.error(f"Erro ao converter o PDF (pdf2image/poppler): {e}")
         st.stop()
 
+# ==================================================================
+# --- A CORREÇÃO ESTÁ AQUI ---
+# ==================================================================
 @st.cache_data(ttl=3600) # Também faz cache do OCR
-def extrair_texto_das_imagens(images):
+def extrair_texto_das_imagens(_images): # <--- Adicionado o underscore
     """Etapa 4: Executa o OCR (Tesseract) em todas as imagens."""
     custom_config = r'--psm 6 -c load_system_dawg=0 -c load_freq_dawg=0'
     full_text = ""
     
-    for i, page_image in enumerate(images):
+    # Usar a variável com underscore
+    for i, page_image in enumerate(_images): 
         try:
             text = pytesseract.image_to_string(page_image, lang='por', config=custom_config)
             full_text += f"\n\n--- INÍCIO PÁGINA {i + 1} ---\n{text}"
@@ -57,6 +61,9 @@ def extrair_texto_das_imagens(images):
             st.warning(f"Erro no Tesseract (OCR) na página {i + 1}: {e}")
             continue
     return full_text
+# ==================================================================
+# --- FIM DA CORREÇÃO ---
+# ==================================================================
 
 def extrair_dados_com_ia(full_text):
     """Etapa 5: Primeira chamada à IA para extrair o JSON."""
@@ -215,7 +222,8 @@ if st.button("Analisar Relatório", type="primary"):
         # Etapas 1-5 (Download, OCR, Extração IA)
         with st.spinner("A processar PDF e a extrair dados..."):
             images = download_e_converter_pdf(pdf_url)
-            full_text = extrair_texto_das_imagens(images)
+            # AQUI CHAMAMOS A FUNÇÃO CORRIGIDA
+            full_text = extrair_texto_das_imagens(images) 
             report_data = extrair_dados_com_ia(full_text)
         
         if report_data:
