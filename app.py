@@ -77,15 +77,26 @@ def extrair_texto_das_imagens(_images):
 def extrair_dados_com_ia(full_text):
     """Etapa 5: Primeira chamada à IA para extrair o JSON de medições."""
     model_extraca = genai.GenerativeModel('gemini-2.5-flash-lite')
+    
     prompt_extracao = f"""
     Analise o seguinte texto, que foi extraído (via OCR) de um relatório de pneus.
-    O texto pode conter erros de OCR (ex: '3.7' pode aparecer como '37', 'mm' pode aparecer como 'mni', 'TE' pode aparecer como 'SE').
-    Sua tarefa é extrair as três medições de profundidade (em mm) para cada pneu: DE, DD, TE e TD.
-    REGRAS IMPORTANTES:
-    1. Os valores corretos são os 3 números que aparecem *embaixo* dos rótulos "DE", "DD", "TE", ou "TD" nas secções de inspeção detalhadas.
-    2. Ignore os valores no sumário principal (ex: "8 mm", "3 mm", "1.6 mm").
-    3. Se o OCR removeu o ponto decimal (ex: '37' em vez de '3.7'), re-insira o ponto. (ex: '37' -> '3.7', '18' -> '1.8', '14' -> '1.4').
-    4. Se um pneu não for encontrado, use "N/A" para as 3 medições.
+    O texto está dividido por páginas (--- INÍCIO PÁGINA 1 ---, --- INÍCIO PÁGINA 2 ---).
+    O texto pode conter erros de OCR (ex: '3.7' pode aparecer como '37', 'TE' como 'SE', 'TD' como 'Si').
+
+    Sua tarefa é extrair as três medições de profundidade (em mm) para cada pneu.
+
+    REGRAS DE EXTRAÇÃO PARA EVITAR TROCAS:
+    1.  **DE (Dianteiro Esquerdo)**: Encontra-se APENAS no texto da **PÁGINA 1**.
+    2.  **DD (Dianteiro Direito)**: Encontra-se APENAS no texto da **PÁGINA 1**.
+    3.  **TE (Traseiro Esquerdo)**: Encontra-se APENAS no texto da **PÁGINA 2**. (O OCR pode lê-lo como "SE").
+    4.  **TD (Traseiro Direito)**: Encontra-se APENAS no texto da **PÁGINA 2**. (O OCR pode lê-lo como "Si").
+    
+    REGRAS DE DADOS:
+    1.  Os valores corretos são os 3 números que aparecem *embaixo* dos rótulos (DE, DD, TE, TD).
+    2.  Ignore os valores no sumário principal (ex: "8 mm", "3 mm", "1.6 mm").
+    3.  Se o OCR removeu o ponto decimal (ex: '37' em vez de '3.7'), re-insira o ponto. (ex: '37' -> '3.7', '18' -> '1.8', '14' -> '1.4').
+    4.  Se um pneu não for encontrado, use "N/A" para as 3 medições.
+
     Retorne APENAS um objeto JSON único (um dicionário), no seguinte formato exato:
     {{
       "DE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
@@ -93,11 +104,13 @@ def extrair_dados_com_ia(full_text):
       "TE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
       "TD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}}
     }}
+
     Texto para analisar:
     ---
     {full_text}
     ---
     """
+ 
     try:
         response_extracao = model_extraca.generate_content(prompt_extracao)
         json_text = response_extracao.text.strip().replace("```json", "").replace("```", "")
