@@ -76,24 +76,31 @@ def extrair_texto_das_imagens(_images):
             continue
     return full_text
 
+# ==================================================================
+# --- (PROMPT DE EXTRAÇÃO CORRIGIDO CONTRA ALUCINAÇÃO DE/DD) ---
+# ==================================================================
 def extrair_dados_com_ia(full_text):
     """Etapa 5: Primeira chamada à IA para extrair o JSON de medições."""
     model_extraca = genai.GenerativeModel('gemini-2.5-flash-lite')
     prompt_extracao = f"""
     Analise o seguinte texto, que foi extraído (via OCR) de um relatório de pneus.
     O texto está dividido por páginas (--- INÍCIO PÁGINA 1 ---, --- INÍCIO PÁGINA 2 ---).
-    O texto pode conter erros de OCR (ex: '3.7' pode aparecer como '37', 'TE' como 'SE', 'TD' como 'Si').
+    O texto pode conter erros de OCR (ex: '3.7' pode aparecer como '37', 'TE' como 'SE', 'DD' como 'DE').
+
     Sua tarefa é extrair as três medições de profundidade (em mm) para cada pneu.
+
     REGRAS DE EXTRAÇÃO PARA EVITAR TROCAS:
-    1.  **DE (Dianteiro Esquerdo)**: Encontra-se APENAS no texto da **PÁGINA 1**.
-    2.  **DD (Dianteiro Direito)**: Encontra-se APENAS no texto da **PÁGINA 1**.
+    1.  **DE (Dianteiro Esquerdo)**: Encontra-se na **PÁGINA 1**, geralmente à esquerda. Encontre o rótulo "DE" e os 3 números abaixo dele.
+    2.  **DD (Dianteiro Direito)**: Encontra-se na **PÁGINA 1**, geralmente à direita. Encontre o rótulo "DD" e os 3 números abaixo dele. Os valores são DIFERENTES do DE.
     3.  **TE (Traseiro Esquerdo)**: Encontra-se APENAS no texto da **PÁGINA 2**. (O OCR pode lê-lo como "SE").
     4.  **TD (Traseiro Direito)**: Encontra-se APENAS no texto da **PÁGINA 2**. (O OCR pode lê-lo como "Si").
+    
     REGRAS DE DADOS:
-    1.  Os valores corretos são os 3 números que aparecem *embaixo* dos rótulos (DE, DD, TE, TD).
+    1.  Os valores corretos são os 3 números que aparecem *embaixo* dos rótulos (DE, DD, TE, TD) nas secções de inspeção.
     2.  Ignore os valores no sumário principal (ex: "8 mm", "3 mm", "1.6 mm").
     3.  Se o OCR removeu o ponto decimal (ex: '37' em vez de '3.7'), re-insira o ponto. (ex: '37' -> '3.7', '18' -> '1.8', '14' -> '1.4').
     4.  Se um pneu não for encontrado, use "N/A" para as 3 medições.
+
     Retorne APENAS um objeto JSON único (um dicionário), no seguinte formato exato:
     {{
       "DE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
@@ -101,6 +108,7 @@ def extrair_dados_com_ia(full_text):
       "TE": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}},
       "TD": {{"medicao_1": "X.X", "medicao_2": "X.X", "medicao_3": "X.X"}}
     }}
+
     Texto para analisar:
     ---
     {full_text}
@@ -115,6 +123,10 @@ def extrair_dados_com_ia(full_text):
         st.error(f"Erro na IA (Extração) ou ao processar o JSON: {e}")
         st.error(f"Texto recebido da IA: {response_extracao.text}")
         return None
+# ==================================================================
+# --- FIM DA CORREÇÃO DO PROMPT DE EXTRAÇÃO ---
+# ==================================================================
+
 
 def analisar_dados_logicamente(report_data, full_text):
     """Etapa 5.5: O motor de lógica feito em Python."""
@@ -245,22 +257,28 @@ def get_cor_e_risco(valor_mm):
     else:
         return "off", "Bom" # Verde
 
-def plotar_desgaste_pneu(medicoes_dict, pneu_label):
+# ==================================================================
+# --- (FUNÇÃO DE GRÁFICO CORRIGIDA PARA LEGIBILIDADE) ---
+# ==================================================================
+@st.cache_data(ttl=3600)
+def plotar_desgaste_pneu(_medicoes_dict, pneu_label):
     """Cria um gráfico de barras (Matplotlib) para o desgaste do pneu."""
     
-    labels = ["Exterior", "Centro", "Interior"]
-    valores = [None, None, None]
+    # Cor do texto que funciona bem em modo claro e escuro
+    TEXT_COLOR = "#FFFFFF" 
     
-    if medicoes_dict:
+    labels = ["Exterior", "Centro", "Interior"]
+    valores = [0, 0, 0] # Default
+    
+    if _medicoes_dict:
         try:
-            # Tenta converter os valores para float, tratando "N/A"
             valores = [
-                float(medicoes_dict.get('medicao_1', '0')),
-                float(medicoes_dict.get('medicao_2', '0')),
-                float(medicoes_dict.get('medicao_3', '0'))
+                float(_medicoes_dict.get('medicao_1', 0)),
+                float(_medicoes_dict.get('medicao_2', 0)),
+                float(_medicoes_dict.get('medicao_3', 0))
             ]
         except (ValueError, TypeError):
-            valores = [0, 0, 0] # Em caso de erro, desenha barras vazias
+            pass # Mantém [0, 0, 0] se os dados forem "N/A"
             
     # Define as cores com base no risco
     cores = []
@@ -273,37 +291,38 @@ def plotar_desgaste_pneu(medicoes_dict, pneu_label):
             cores.append("#28A138") # Verde
 
     # Cria a figura e o eixo
-    fig, ax = plt.subplots(figsize=(4, 2))
+    fig, ax = plt.subplots(figsize=(5, 3)) # Um pouco maior para legibilidade
     
     # Desenha as barras de desgaste
-    barras = ax.bar(labels, valores, color=cores, width=0.8)
+    barras = ax.bar(labels, valores, color=cores, width=0.7)
     
     # Adiciona os rótulos de dados (números) em cima das barras
-    ax.bar_label(barras, fmt='%.1f mm', fontsize=10, color='black', padding=3)
+    ax.bar_label(barras, fmt='%.1f mm', fontsize=12, color=TEXT_COLOR, padding=3)
     
-    # Define o limite máximo do gráfico (ex: 15mm, para incluir o 14mm do TD)
-    ax.set_ylim(0, 15)
+    # Define o limite máximo do gráfico (ex: 15mm)
+    max_val = max(valores + [15]) # Garante que cabe o 14, mas não fica gigante
+    ax.set_ylim(0, max_val * 1.2) # Dá 20% de espaço no topo
     
     # Limpa a poluição visual
-    ax.set_title(pneu_label, fontweight="bold")
+    ax.set_title(pneu_label, fontweight="bold", color=TEXT_COLOR, fontsize=14)
     ax.set_yticks([]) # Remove os números do eixo Y
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
     ax.spines['left'].set_visible(False)
     ax.spines['bottom'].set_color('#888')
-    ax.tick_params(axis='x', colors='#333')
+    ax.tick_params(axis='x', colors=TEXT_COLOR, labelsize=11)
     
     # Define a cor de fundo transparente
     fig.patch.set_alpha(0.0)
     ax.patch.set_alpha(0.0)
     
     # Envia o gráfico para o Streamlit
-    st.pyplot(fig)
+    st.pyplot(fig, use_container_width=True) # Usa a largura total da coluna
+# ==================================================================
+# --- FIM DA CORREÇÃO DO GRÁFICO ---
+# ==================================================================
 
 
-# ==================================================================
-# --- (FUNÇÃO MODIFICADA) PARA MOSTRAR MÉTRICAS E GRÁFICOS ---
-# ==================================================================
 def mostrar_metricas_pneus(report_data):
     """Exibe a caixa de mensagem com os piores valores E os gráficos de desgaste."""
     st.subheader("Balanço Rápido (Pior Medição)")
@@ -345,22 +364,28 @@ def mostrar_metricas_pneus(report_data):
                 delta_color=cor
             )
 
-    # --- (NOVA SEÇÃO DE VISUALIZAÇÃO) ---
+    # --- (SEÇÃO DE VISUALIZAÇÃO MODIFICADA) ---
     st.subheader("Visualização do Desgaste (Exterior / Centro / Interior)")
     
-    # Cria duas colunas para organizar os 4 gráficos
+    # Adicionamos o decorador @st.cache_data à função plotar,
+    # por isso precisamos de passar os dados de uma forma que o cache entenda
+    # (dicionários são 'hashable', objetos de imagem não são).
+    
     col_a, col_b = st.columns(2)
     
     with col_a:
+        st.text("DE (Dianteiro Esquerdo)")
         plotar_desgaste_pneu(report_data.get("DE"), "DE (Dianteiro Esquerdo)")
+        st.text("TE (Traseiro Esquerdo)")
         plotar_desgaste_pneu(report_data.get("TE"), "TE (Traseiro Esquerdo)")
         
     with col_b:
+        st.text("DD (Dianteiro Direito)")
         plotar_desgaste_pneu(report_data.get("DD"), "DD (Dianteiro Direito)")
+        st.text("TD (Traseiro Direito)")
         plotar_desgaste_pneu(report_data.get("TD"), "TD (Traseiro Direito)")
         
 
-# --- (NOVA) FUNÇÃO DE PIPELINE PRINCIPAL ---
 def run_analysis_pipeline(pdf_url):
     """Executa todo o processo de análise num determinado URL."""
     report_data = None
