@@ -47,7 +47,7 @@ def decode_qr_code(image_data):
         return None
 
 # --- ETAPAS DO PIPELINE (COMO FUNÇÕES) ---
-
+@st.cache_data(ttl=3600)
 def download_e_converter_pdf(pdf_url):
     try:
         pdf_response = requests.get(pdf_url)
