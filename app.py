@@ -48,7 +48,6 @@ def decode_qr_code(image_data):
 
 # --- ETAPAS DO PIPELINE (COMO FUNÇÕES) ---
 
-@st.cache_data(ttl=3600)
 def download_e_converter_pdf(pdf_url):
     try:
         pdf_response = requests.get(pdf_url)
@@ -63,7 +62,6 @@ def download_e_converter_pdf(pdf_url):
         st.error(f"Erro ao converter o PDF (pdf2image/poppler): {e}")
         st.stop()
 
-@st.cache_data(ttl=3600)
 def extrair_texto_das_imagens(_images):
     custom_config = r'--psm 6 -c load_system_dawg=0 -c load_freq_dawg=0'
     full_text = ""
@@ -260,7 +258,6 @@ def get_cor_e_risco(valor_mm):
 # ==================================================================
 # --- (FUNÇÃO DE GRÁFICO CORRIGIDA PARA LEGIBILIDADE) ---
 # ==================================================================
-@st.cache_data(ttl=3600)
 def plotar_desgaste_pneu(_medicoes_dict, pneu_label):
     """Cria um gráfico de barras (Matplotlib) para o desgaste do pneu."""
     
@@ -367,7 +364,6 @@ def mostrar_metricas_pneus(report_data):
     # --- (SEÇÃO DE VISUALIZAÇÃO MODIFICADA) ---
     st.subheader("Visualização do Desgaste (Exterior / Centro / Interior)")
     
-    # Adicionamos o decorador @st.cache_data à função plotar,
     # por isso precisamos de passar os dados de uma forma que o cache entenda
     # (dicionários são 'hashable', objetos de imagem não são).
     
